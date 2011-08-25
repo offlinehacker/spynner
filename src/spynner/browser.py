@@ -491,19 +491,26 @@ class Browser(object):
                 self._events_loop()
             self._events_loop(0.0)
 
+    def _selector_or_element(self, selector):
+        if isinstance(selector, QWebElement):
+            return selector
+        else:
+            return self.webframe.findFirstElement(selector)
+
     def sendText(self, selector, text, keyboard_modifiers = Qt.NoModifier, wait_load=False, wait_requests=None, timeout=None):
         """
         Send text in any element (to fill it for example)
 
-        @param selector: QtWebkit Selector
+        @param selector: QWebKit xpath selector to an element or QWebElement object
         @param keys to input in the QT way
         @param wait_load: If True, it will wait until a new page is loaded.
         @param timeout: Seconds to wait for the page to load before raising an exception.
         @param wait_requests: How many requests to wait before returning. Useful for AJAX requests.
 
         >>> br.sendText('#val_cel_dentifiant', 'fancy text')
+        >>> br.sendText(QWebElement, 'fancy text2)
         """
-        element = self.webframe.findFirstElement(selector)
+        element = _self.selector_or_element(selector)
         element.setFocus()
         eventp = QKeyEvent(QEvent.KeyPress, Qt.Key_A, keyboard_modifiers, QString(text))
         self.application.sendEvent(self.webview, eventp)
@@ -517,7 +524,7 @@ class Browser(object):
         Click any clickable element in page.
         see http://www.riverbankcomputing.co.uk/static/Docs/PyQt4/html/qt.html#Key-enum
 
-        @param selector: jQtWebkit Selector
+        @param selector: QWebKit xpath selector to an element or QWebElement object
         @param keys to input in the QT way
         @param wait_load: If True, it will wait until a new page is loaded.
         @param timeout: Seconds to wait for the page to load before
@@ -528,7 +535,7 @@ class Browser(object):
         Send raw keys:
         >>> br.sendKeys('#val_cel_dentifiant', [Qt.Key_A,Qt.Key_A,Qt.Key_C,]
         """
-        element = self.webframe.findFirstElement(selector)
+        element = self._selector_or_element(selector)
         element.setFocus()
         for key in keys:
             eventp = QKeyEvent(QEvent.KeyPress, key, keyboard_modifiers)
@@ -617,11 +624,15 @@ class Browser(object):
 
     def getPosition(self, selector):
         """Get the position QPoint(x,y) of a css selector.
-        @param selector: The css Selector to query against
+        @param selector: QWebKit xpath selector to an element or QWebElement object
         """
-        jscode = "off = %s('%s').offset(); off.left+','+off.top" % (self.jslib, selector)
-        self._replies = 0
         try:
+            #Let's go to qt based location selection
+            if isinstance(selector, QWebElement):
+                raise Exception
+
+            jscode = "off = %s('%s').offset(); off.left+','+off.top" % (self.jslib, selector)
+            self._replies = 0
             x, y = ("%s" % self.runjs(jscode, debug=False).toString()).split(',')
             twhere = QPoint(int(x), int(y))
             where = self.webview.mapToGlobal(twhere)
@@ -630,21 +641,28 @@ class Browser(object):
         except Exception, e:
             #try also using qt
             try:
-                item = self.webframe.findFirstElement(selector)
+                item = self._selector_or_element(selector)
                 geo = item.geometry()
                 twhere = geo.topLeft()
                 where = self.webview.mapToGlobal(twhere)
                 if where == twhere:
                     where = self.webview.mapToGlobal(where) 
             except:
-                raise  SpynnerError('Cant find %s (%s)' % (selector, e))
+                raise  SpynnerError('Cant find %s (%s)' % (repr(selector), e))
         return where
 
-    def wk_click_element(self, element, wait_load=False, wait_requests=None, timeout=None):
+    def getDocument(self):
+        """
+        Gets documentElement of entire dom structure
+        @return: QWebElement
+        """
+        return self.webframe.documentElement()
+
+    def wk_click(self, element, wait_load=False, wait_requests=None, timeout=None):
         """
         Click on an element by using raw javascript WebKit.click() method.
 
-        @param element: QWebElement object
+        @param element: QWebKit xpath selector to an element or QWebElement object
         @param wait_load: If True, it will wait until a new page is loaded.
         @param timeout: Seconds to wait for the page to load before
                                        raising an exception.
@@ -669,62 +687,27 @@ class Browser(object):
             "e.initEvent( 'click', true, true );"
             "this.dispatchEvent(e);"
         )
-        element.evaluateJavaScript(jscode)
+        self._selector_or_element(element).evaluateJavaScript(jscode)
         time.sleep(0.5)
         self.wait_requests(wait_requests)
         if wait_load:
             return self._wait_load(timeout)
 
-    def wk_click_element_link(self, element, timeout=None):
-        """Click a link and wait for the page to load.
-        @param selector: WebKit xpath selector to an element
-        @param: timeout timeout to wait in seconds
-        """
-        return self.wk_click_element(element, wait_load=True, timeout=timeout)
-
-    def wk_click_element_ajax(self, element, wait_requests=1, timeout=None):
-        """Click a AJAX link and wait for the request to finish.
-        @param selector: WebKit xpath selector to an element
-        @param wait_requests: How many requests to wait before returning. Useful
-                              for AJAX requests.
-        @param: timeout timeout to wait in seconds
-        """
-        return self.wk_click_element(element, wait_requests=wait_requests, timeout=timeout)
-
-    def wk_click(self, selector, wait_load=False, wait_requests=None, timeout=None):
-        """
-        Select an element with a CSS2 selector and then click by using raw javascript WebKit.click() method.
-        See the wk_click_element functions for additional documentation
-
-        @param selector: WebKit selector.
-        @param wait_load: If True, it will wait until a new page is loaded.
-        @param timeout: Seconds to wait for the page to load before
-                                       raising an exception.
-        @param wait_requests: How many requests to wait before returning. Useful
-                              for AJAX requests.
-        """
-        element = self.webframe.findFirstElement(selector)
-        return self.wk_click_element(element, wait_load=wait_load, wait_requests=wait_requests, timeout=timeout)
-
     def wk_click_link(self, selector, timeout=None):
         """Click a link and wait for the page to load.
-        See the wk_click_element_link functions for additional documentation
-        @param selector: WebKit xpath selector to an element
+        @param selector: WebKit xpath selector to an element or QWebElement object
         @param: timeout timeout to wait in seconds
         """
-        element = self.webframe.findFirstElement(selector)
-        return self.wk_click_element_link(element, timeout=timeout)
+        return self.wk_click(selector, wait_load=True, timeout=timeout)
 
     def wk_click_ajax(self, selector, wait_requests=1, timeout=None):
         """Click a AJAX link and wait for the request to finish.
-        See the wk_click_element_ajax functions for additional documentation
-        @param selector: WebKit xpath selector to an element
+        @param selector: WebKit xpath selector to an element or QWebElement object
         @param wait_requests: How many requests to wait before returning. Useful
                               for AJAX requests.
         @param: timeout timeout to wait in seconds
         """
-        element = self.webframe.findFirstElement(selector)
-        return self.wk_click_element_ajax(element, wait_requests=wait_requests, timeout=timeout)
+        return self.wk_click(selector, wait_requests=wait_requests, timeout=timeout)
 
     # XXX: TODO: this method do not work by now, event seems not posted, strange
     def native_click(self, selector, wait_load=False, wait_requests=None, timeout=None, offsetx = 0, offsety = 0):
@@ -742,7 +725,7 @@ class Browser(object):
         @param offsety: offset to click on the widget to the top left of it on the Y axix (top to bottom)
         """
         where = self.getPosition(selector)
-        item = self.webframe.findFirstElement(selector)
+        item = self._selector_or_element(selector)
         item.setFocus()
         import pdb;pdb.set_trace()  ## Breakpoint ##
         where = QPoint(where.x() + offsetx, where.y() + offsety)
@@ -954,29 +937,19 @@ class Browser(object):
 
     def wk_fill(self, selector, value):
         """Fill an input text with a string value using a WebKit selector and using the webkit webframe object."""
-        element = self.webframe.findFirstElement(selector)
+        element = self._selector_or_element(selector)
         element.evaluateJavaScript("this.value = '%s'" % value)
 
-    def wk_check_elem(self, element):
+    def wk_check(self, element):
         """check an input checkbox using a webkit element."""
         jscode = "this.checked=true;" 
-        element.evaluateJavaScript(jscode)
+        self._selector_or_element(element).evaluateJavaScript(jscode)
 
-    def wk_uncheck_elem(self, element):
+    def wk_uncheck(self, element):
         """uncheck input checkbox using a Webkit element"""
         jscode = "this.checked=false;" 
-        element.evaluateJavaScript(jscode)
+        self._selector_or_element(element).evaluateJavaScript(jscode)
  
-    def wk_check(self, selector):
-        """check an input checkbox using a css selector."""
-        element = self.webframe.findFirstElement(selector)
-        return self.wk_check_elem(element)
-
-    def wk_uncheck(self, selector):
-        """uncheck input checkbox using a css selector"""
-        element = self.webframe.findFirstElement(selector)
-        return self.wk_uncheck_elem(element)
-
     def check(self, selector):
         """Check an input checkbox using a jQuery selector."""
         jscode = "%s('%s').attr('checked', true)" % (self.jslib, selector)
